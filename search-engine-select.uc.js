@@ -2,8 +2,8 @@
 // @name            Search Engine Select
 // @description     Adds a floating UI to switch search engines on a search results page.
 // @author          Bibek Bhusal
-// @version         1.0.0
-// @lastUpdated     2025-10-24
+// @version         1.1.0
+// @lastUpdated     2026-01-04
 // @ignorecache
 // @homepage        https://github.com/Vertex-Mods/Search-Engine-Select
 // ==/UserScript==
@@ -27,7 +27,7 @@
     let domain;
     try {
       domain = new URL(domainOrUrl).hostname;
-    } catch (e) {
+    } catch {
       domain = domainOrUrl;
     }
     return `https://s2.googleusercontent.com/s2/favicons?domain_url=https://${domain}&sz=${size}`;
@@ -48,8 +48,8 @@
       if (submissionUrl) {
         return googleFaviconAPI(submissionUrl);
       }
-    } catch (e) {
-      // ignore
+    } catch {
+      return fallbackIcon;
     }
     return fallbackIcon;
   }
@@ -199,7 +199,7 @@
             const term = decodeURIComponent(match[1].replace(/\+/g, " "));
             debugLog(`Matched: Engine='${item.engine.name}', Term='${term}'`);
             return { engine: item.engine, term };
-          } catch (e) {
+          } catch {
             continue;
           }
         }
@@ -270,7 +270,7 @@
           .getElementById("urlbar-search-mode-indicator-title")
           .innerText.trim();
         engine = await Services.search.getEngineByName(engineName);
-      } catch (e) {
+      } catch {
         debugLog("Search indicator not found. Using default engine.");
         engine = await Services.search.getDefault();
       }

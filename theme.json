@@ -3,14 +3,12 @@
   "name": "Search Engine Select",
   "description": "Adds a floating UI to switch search engines on a search results page.",
   "author": "Bibek Bhusal",
-  "version": "1.0.0",
-  "updatedAt": "2025-10-24",
+  "version": "1.1.0",
+  "updatedAt": "2026-01-04",
   "tags": [
     "Search",
-    "sine",
-    "fx-autoconfig",
-    "JavaScript",
-    "Bibek Bhusal"
+    "Search Engine",
+    "Google"
   ],
   "fork": [
     "zen"
