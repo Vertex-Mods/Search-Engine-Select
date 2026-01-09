@@ -2,8 +2,8 @@
 // @name            Search Engine Select
 // @description     Adds a floating UI to switch search engines on a search results page.
 // @author          Bibek Bhusal
-// @version         1.1.0
-// @lastUpdated     2026-01-04
+// @version         1.1.1b
+// @lastUpdated     2026-01-09
 // @ignorecache
 // @homepage        https://github.com/Vertex-Mods/Search-Engine-Select
 // ==/UserScript==
@@ -55,8 +55,8 @@
   }
 
   function startupFinish(callback) {
-    if (typeof UC_API === "undefined") return;
-    UC_API.Runtime.startupFinished().then(() => callback());
+    if (document.readyState === "complete") callback();
+    else window.addEventListener("load", callback, { once: true });
   }
 
   const parseElement = (elementString, type = "html") => {
@@ -80,36 +80,140 @@
       .replace(/'/g, "&apos;");
   };
 
-  const PREF_ENABLED = "extension.search-engine-select.enabled";
-  const PREF_REMEMBER_POSITION = "extension.search-engine-select.remember-position";
-  const PREF_Y_COOR = "extension.search-engine-select.y-coor";
-  const PREF_DEBUG_MODE = "extension.search-engine-select.debug-mode";
+  function setPref(key, value) {
+    try {
+      const prefService = Services.prefs;
+      if (typeof value === "boolean") {
+        prefService.setBoolPref(key, value);
+      } else if (typeof value === "number") {
+        prefService.setIntPref(key, value);
+      } else {
+        prefService.setStringPref(key, value);
+      }
+    } catch {
+      //ignore
+    }
+  }
 
   const getPref = (key, defaultValue) => {
     try {
-      const pref = UC_API.Prefs.get(key);
-      if (!pref) return defaultValue;
-      if (!pref.exists()) return defaultValue;
-      return pref.value;
-    } catch {
+      const prefService = Services.prefs;
+      if (prefService.prefHasUserValue(key)) {
+        switch (prefService.getPrefType(key)) {
+          case prefService.PREF_STRING:
+            return prefService.getStringPref(key);
+          case prefService.PREF_INT:
+            return prefService.getIntPref(key);
+          case prefService.PREF_BOOL:
+            return prefService.getBoolPref(key);
+        }
+      }
+    } catch (e) {
       return defaultValue;
     }
+    return defaultValue;
   };
 
-  const debugLog = (...args) => {
-    if (getPref(PREF_DEBUG_MODE, false)) {
-      console.log("extension.search-engine-select:", ...args);
+  const setPrefIfUnset = (key, value) => {
+    if (Services.prefs.getPrefType(key) === 0) {
+      setPref(key, value);
     }
   };
 
-  const debugError = (...args) => {
-    if (getPref(PREF_DEBUG_MODE, false)) {
-      console.error("extension.search-engine-select:", ...args);
+  function addPrefListener(name, callback) {
+    const modified_callback = () => {
+      callback({ value: getPref(name) });
+    };
+    Services.prefs.addObserver(name, modified_callback);
+    return { name, callback };
+  }
+
+  let PREFS$1 = class PREFS {
+    static MOD_NAME = "BasePrefs";
+    static DEBUG_MODE = "";
+
+    static defaultValues = {};
+
+    static getPref(key, defaultValue = undefined) {
+      const defaultVal = defaultValue !== undefined ? defaultValue : this.defaultValues[key];
+      return getPref(key, defaultVal);
+    }
+
+    static setPref(prefKey, value) {
+      setPref(prefKey, value);
+    }
+
+    static setInitialPrefs() {
+      for (const [key, value] of Object.entries(this.defaultValues)) {
+        setPrefIfUnset(key, value);
+      }
+    }
+
+    static get debugMode() {
+      if (!this.DEBUG_MODE) return false;
+      return this.getPref(this.DEBUG_MODE);
+    }
+
+    static set debugMode(value) {
+      if (!this.DEBUG_MODE) return;
+      this.setPref(this.DEBUG_MODE, value);
+    }
+
+    static debugLog(...args) {
+      if (this.debugMode) {
+        console.log(`${this.MOD_NAME}:`, ...args);
+      }
+    }
+
+    static debugError(...args) {
+      if (this.debugMode) {
+        console.error(`${this.MOD_NAME}:`, ...args);
+      }
     }
   };
+
+  class SearchEngineSelectPREFS extends PREFS$1 {
+    static MOD_NAME = "SearchEngineSelect";
+    static DEBUG_MODE = "extension.search-engine-select.debug-mode";
+    static ENABLED = "extension.search-engine-select.enabled";
+    static REMEMBER_POSITION = "extension.search-engine-select.remember-position";
+    static Y_COOR = "extension.search-engine-select.y-coor";
+
+    static defaultValues = {
+      [SearchEngineSelectPREFS.DEBUG_MODE]: false,
+      [SearchEngineSelectPREFS.ENABLED]: true,
+      [SearchEngineSelectPREFS.REMEMBER_POSITION]: true,
+      [SearchEngineSelectPREFS.Y_COOR]: "60%",
+    };
+
+    static get enabled() {
+      return this.getPref(this.ENABLED);
+    }
+
+    static set enabled(value) {
+      this.setPref(this.ENABLED, value);
+    }
+
+    static get rememberPosition() {
+      return this.getPref(this.REMEMBER_POSITION);
+    }
+
+    static set rememberPosition(value) {
+      this.setPref(this.REMEMBER_POSITION, value);
+    }
+
+    static get yCoor() {
+      return this.getPref(this.Y_COOR);
+    }
+
+    static set yCoor(value) {
+      this.setPref(this.Y_COOR, value);
+    }
+  }
+
+  const PREFS = SearchEngineSelectPREFS;
 
   const SearchEngineSwitcher = {
-    // --- Internal State ---
     _container: null,
     _engineSelect: null,
     _engineOptions: null,
@@ -122,33 +226,12 @@
     _boundListeners: {},
     _progressListener: null,
 
-    // --- Preference Management ---
-    get enabled() {
-      return getPref(PREF_ENABLED, true);
-    },
-    set enabled(value) {
-      UC_API.Prefs.set(PREF_ENABLED, value);
-    },
-    get rememberPosition() {
-      return getPref(PREF_REMEMBER_POSITION, true);
-    },
-    set rememberPosition(value) {
-      UC_API.Prefs.set(PREF_REMEMBER_POSITION, value);
-    },
-    get Y_COOR() {
-      return getPref(PREF_Y_COOR, "60%");
-    },
-    set Y_COOR(value) {
-      UC_API.Prefs.set(PREF_Y_COOR, value);
-    },
-
-    // --- Core Methods ---
     async init() {
-      if (!this.enabled) {
-        debugLog("Initialization aborted: feature is disabled.");
+      if (!PREFS.enabled) {
+        PREFS.debugLog("Initialization aborted: feature is disabled.");
         return;
       }
-      debugLog("Initializing...");
+      PREFS.debugLog("Initializing...");
       await this.buildEngineRegexCache();
       this.createUI();
       this.attachEventListeners();
@@ -162,11 +245,11 @@
       this._engineSelect = null;
       this._engineOptions = null;
       this._dragHandle = null;
-      debugLog("Destroyed successfully.");
+      PREFS.debugLog("Destroyed successfully.");
     },
 
     async buildEngineRegexCache() {
-      debugLog("Building engine regex cache...");
+      PREFS.debugLog("Building engine regex cache...");
       this._engineCache = [];
       const engines = await Services.search.getVisibleEngines();
       const PLACEHOLDER = "SEARCH_TERM_PLACEHOLDER_E6A8D";
@@ -185,7 +268,7 @@
             regex: new RegExp(`^${regexString}`),
           });
         } catch (e) {
-          debugError(`Failed to process engine ${engine.name}`, e);
+          PREFS.debugError(`Failed to process engine ${engine.name}`, e);
         }
       }
     },
@@ -197,7 +280,7 @@
         if (match && match[1]) {
           try {
             const term = decodeURIComponent(match[1].replace(/\+/g, " "));
-            debugLog(`Matched: Engine='${item.engine.name}', Term='${term}'`);
+            PREFS.debugLog(`Matched: Engine='${item.engine.name}', Term='${term}'`);
             return { engine: item.engine, term };
           } catch {
             continue;
@@ -221,6 +304,7 @@
       if (!this._container) return;
       this._container.style.display = "flex";
       this.updateSelectedEngineDisplay();
+      this.handleSplitOrGlance();
     },
 
     _hide() {
@@ -241,7 +325,6 @@
       this._engineSelect.replaceChildren(img, nameSpan);
     },
 
-    // --- Event Handlers ---
     handleEnabledChange(pref) {
       if (pref.value) this.init();
       else this.destroy();
@@ -250,12 +333,51 @@
     handleTabSelect() {
       this._hide();
       this.updateSwitcherVisibility();
+      this.handleSplitOrGlance();
+      if (gBrowser.selectedTab?.hasAttribute("zen-glance-tab")) {
+        setTimeout(() => this.updatePosition(), 500);
+      }
     },
 
     onLocationChange(browser) {
       if (browser === gBrowser.selectedBrowser) {
         this.updateSwitcherVisibility();
       }
+    },
+
+    handleSplitOrGlance() {
+      if (!this._container) return;
+
+      const isVerticalSplit =
+        window.gZenViewSplitter?.currentView >= 0 &&
+        window.gZenViewSplitter._data[window.gZenViewSplitter.currentView]?.gridType === "vsep";
+
+      const isGlance = gBrowser.selectedTab?.hasAttribute("zen-glance-tab");
+      if (!isVerticalSplit && !isGlance) {
+        this._container.style.removeProperty("--ses-pane-x");
+        this._container.style.removeProperty("--ses-pane-width");
+        this._container.classList.remove("in-split-view");
+        return;
+      }
+      this.updatePosition();
+      this._container.classList.add("in-split-view");
+    },
+
+    updatePosition() {
+      const activeBrowser = gBrowser.selectedBrowser;
+      if (
+        !activeBrowser ||
+        !this._container ||
+        !this._container.classList.contains("in-split-view")
+      ) {
+        this._container.style.removeProperty("--ses-pane-x");
+        this._container.style.removeProperty("--ses-pane-width");
+        return;
+      }
+
+      const rect = activeBrowser.getBoundingClientRect();
+      this._container.style.setProperty("--ses-pane-x", `${rect.x}px`);
+      this._container.style.setProperty("--ses-pane-width", `${rect.width}px`);
     },
 
     async handleURLBarKey(event) {
@@ -271,12 +393,12 @@
           .innerText.trim();
         engine = await Services.search.getEngineByName(engineName);
       } catch {
-        debugLog("Search indicator not found. Using default engine.");
+        PREFS.debugLog("Search indicator not found. Using default engine.");
         engine = await Services.search.getDefault();
       }
 
       if (engine && term) {
-        debugLog(`URL bar search detected. Engine: ${engine.name}, Term: ${term}`);
+        PREFS.debugLog(`URL bar search detected. Engine: ${engine.name}, Term: ${term}`);
         this._currentSearchInfo = { engine, term };
         this._show();
       }
@@ -286,9 +408,8 @@
       event.preventDefault();
       event.stopPropagation();
 
-      // If clicking the same engine, just close the menu.
       if (newEngine.name === this._currentSearchInfo?.engine.name) {
-        debugLog(`Clicked on same engine ('${newEngine.name}'). Closing menu.`);
+        PREFS.debugLog(`Clicked on same engine ('${newEngine.name}'). Closing menu.`);
         this._engineOptions.style.display = "none";
         this._container.classList.remove("options-visible");
         return;
@@ -300,54 +421,40 @@
       const newUrl = newEngine.getSubmission(term).uri.spec;
       let actionTaken = false;
 
-      // Ctrl+Click (no other modifiers) -> Split View
       if (event.button === 0 && event.ctrlKey && !event.altKey && !event.shiftKey) {
-        debugLog("Action: Split View");
+        PREFS.debugLog("Action: Split View");
         if (window.gZenViewSplitter) {
           const previousTab = gBrowser.selectedTab;
           await openTrustedLinkIn(newUrl, "tab");
           const currentTab = gBrowser.selectedTab;
           gZenViewSplitter.splitTabs([currentTab, previousTab], "vsep", 1);
         } else {
-          openTrustedLinkIn(newUrl, "tab"); // Fallback
+          openTrustedLinkIn(newUrl, "tab");
         }
         actionTaken = true;
-
-        // Alt+Click -> Glance
       } else if (event.button === 0 && event.altKey) {
-        debugLog("Action: Glance");
+        PREFS.debugLog("Action: Glance");
         if (window.gZenGlanceManager) {
-          const rect = gBrowser.selectedBrowser.getBoundingClientRect();
           window.gZenGlanceManager.openGlance({
             url: newUrl,
-            x: rect.left + rect.width / 2,
-            y: rect.top + rect.height / 2,
-            width: 10,
-            height: 10,
           });
         } else {
-          openTrustedLinkIn(newUrl, "tab"); // Fallback
+          openTrustedLinkIn(newUrl, "tab");
         }
         actionTaken = true;
-
-        // Middle Click -> Background Tab
       } else if (event.button === 1) {
-        debugLog("Action: Background Tab");
+        PREFS.debugLog("Action: Background Tab");
         openTrustedLinkIn(newUrl, "tab", {
           inBackground: true,
           relatedToCurrent: true,
         });
-        /// action take but in background tab no need to update here
-
-        // Left Click -> Current Tab
       } else if (event.button === 0) {
-        debugLog("Action: Current Tab");
+        PREFS.debugLog("Action: Current Tab");
         openTrustedLinkIn(newUrl, "current");
         actionTaken = true;
       }
 
       if (actionTaken) {
-        this._currentSearchInfo.engine = newEngine;
         this.updateSelectedEngineDisplay();
       }
 
@@ -375,10 +482,9 @@
       this._container.classList.remove("options-visible");
     },
 
-    // --- UI Creation ---
     createUI() {
       const container = parseElement(`
-      <div id="search-engine-switcher-container" style="top: ${this.Y_COOR};">
+      <div id="search-engine-switcher-container" style="top: ${PREFS.yCoor};">
         <div id="ses-engine-select"></div>
         <div id="ses-drag-handle"></div>
         <div id="ses-engine-options"></div>
@@ -409,7 +515,6 @@
       });
     },
 
-    // --- Drag Functionality ---
     startDrag(e) {
       if (e.button !== 0) return;
       e.preventDefault();
@@ -436,16 +541,14 @@
       this._isDragging = false;
       this._container.classList.remove("is-dragging");
       this._dragHandle.style.cursor = "grab";
-      if (this.rememberPosition) {
-        this.Y_COOR = this._container.style.top;
+      if (PREFS.rememberPosition) {
+        PREFS.yCoor = this._container.style.top;
       }
       document.removeEventListener("mousemove", this._boundListeners.doDrag);
       document.removeEventListener("mouseup", this._boundListeners.stopDrag);
     },
 
-    // --- Event Listener Management ---
     attachEventListeners() {
-      // Create a specific listener object for the progress listener
       this._progressListener = {
         onLocationChange: this.onLocationChange.bind(this),
         QueryInterface: ChromeUtils.generateQI([
@@ -454,7 +557,6 @@
         ]),
       };
 
-      // Bind all other listeners
       this._boundListeners.handleTabSelect = this.handleTabSelect.bind(this);
       this._boundListeners.handleURLBarKey = this.handleURLBarKey.bind(this);
       this._boundListeners.toggleOptions = this.toggleOptions.bind(this);
@@ -462,6 +564,14 @@
       this._boundListeners.startDrag = this.startDrag.bind(this);
       this._boundListeners.doDrag = this.doDrag.bind(this);
       this._boundListeners.stopDrag = this.stopDrag.bind(this);
+      this._boundListeners.onSplitViewActivated = this.handleSplitOrGlance.bind(this);
+      this._boundListeners.onSplitViewDeactivated = this.handleSplitOrGlance.bind(this);
+      this._boundListeners.onCompactModeToggled = this.updatePosition.bind(this);
+      this._boundListeners.onResize = this.updatePosition.bind(this);
+      this._boundListeners.onTabClose = () => {
+        this.updatePosition();
+        setTimeout(() => this.updatePosition(), 500);
+      };
 
       gBrowser.tabContainer.addEventListener("TabSelect", this._boundListeners.handleTabSelect);
       gBrowser.addTabsProgressListener(this._progressListener);
@@ -469,6 +579,18 @@
       this._engineSelect.addEventListener("click", this._boundListeners.toggleOptions);
       document.addEventListener("click", this._boundListeners.hideOptionsOnClickOutside);
       this._dragHandle.addEventListener("mousedown", this._boundListeners.startDrag);
+      gBrowser.tabContainer.addEventListener("TabClose", this._boundListeners.onTabClose);
+
+      window.addEventListener(
+        "ZenViewSplitter:SplitViewActivated",
+        this._boundListeners.onSplitViewActivated
+      );
+      window.addEventListener(
+        "ZenViewSplitter:SplitViewDeactivated",
+        this._boundListeners.onSplitViewDeactivated
+      );
+      window.addEventListener("ZenCompactMode:Toggled", this._boundListeners.onCompactModeToggled);
+      window.addEventListener("resize", this._boundListeners.onResize);
     },
 
     removeEventListeners() {
@@ -483,6 +605,19 @@
       this._dragHandle?.removeEventListener("mousedown", this._boundListeners.startDrag);
       document.removeEventListener("mousemove", this._boundListeners.doDrag);
       document.removeEventListener("mouseup", this._boundListeners.stopDrag);
+      gBrowser.tabContainer.removeEventListener("TabClose", this._boundListeners.onTabClose);
+
+      window.removeEventListener(
+        "ZenViewSplitter:SplitViewActivated",
+        this._boundListeners.onSplitViewActivated
+      );
+      window.removeEventListener(
+        "ZenViewSplitter:SplitViewDeactivated",
+        this._boundListeners.onSplitViewDeactivated
+      );
+      window.removeEventListener("ZenCompactMode:Toggled", this._boundListeners.onCompactModeToggled);
+      window.removeEventListener("resize", this._boundListeners.onResize);
+
       this._boundListeners = {};
     },
   };
@@ -492,11 +627,11 @@
       SearchEngineSwitcher.handleEnabledChange(pref);
     };
 
-    // Initial check on load
-    if (getPref(PREF_ENABLED, true)) SearchEngineSwitcher.init();
+    PREFS.setInitialPrefs();
 
-    // Listen for real-time changes
-    UC_API.Prefs.addListener(PREF_ENABLED, handleEnabledChange);
+    if (PREFS.enabled) SearchEngineSwitcher.init();
+
+    addPrefListener(PREFS.ENABLED, handleEnabledChange);
   }
   startupFinish(init);
 
