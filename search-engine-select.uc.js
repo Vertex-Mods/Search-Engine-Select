@@ -3,7 +3,7 @@
 // @description     Adds a floating UI to switch search engines on a search results page.
 // @author          Bibek Bhusal
 // @version         1.1.1b
-// @lastUpdated     2026-01-09
+// @lastUpdated     2026-01-15
 // @ignorecache
 // @homepage        https://github.com/Vertex-Mods/Search-Engine-Select
 // ==/UserScript==
