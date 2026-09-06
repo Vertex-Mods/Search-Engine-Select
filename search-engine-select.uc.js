@@ -2,8 +2,8 @@
 // @name            Search Engine Select
 // @description     Adds a floating UI to switch search engines on a search results page.
 // @author          Bibek Bhusal
-// @version         1.1.3
-// @lastUpdated     2026-06-20
+// @version         1.1.31
+// @lastUpdated     2026-09-06
 // @ignorecache
 // @homepage        https://github.com/Vertex-Mods/Search-Engine-Select
 // ==/UserScript==
@@ -184,6 +184,58 @@
     return (await getSearchService()).getDefault();
   }
 
+  // utils/open-link.js
+  async function openLink(url, where = "new tab") {
+    if (!url)
+      return !1;
+    let destination = where?.toLowerCase()?.trim();
+    switch (destination) {
+      case "current tab":
+        return openTrustedLinkIn(url, "current"), !0;
+      case "new tab":
+        return openTrustedLinkIn(url, "tab"), !0;
+      case "background tab":
+        return openTrustedLinkIn(url, "tab", { inBackground: !0, relatedToCurrent: !0 }), !0;
+      case "new window":
+        return openTrustedLinkIn(url, "window"), !0;
+      case "incognito":
+      case "private":
+        return window.openTrustedLinkIn(url, "window", { private: !0 }), !0;
+      case "glance": {
+        let manager = window.gZenGlanceManager;
+        if (manager?.openGlance)
+          try {
+            let tabboxRect = gBrowser.tabbox?.getBoundingClientRect(), clickPosition = window.gZenUIManager?._lastClickPosition ?? {
+              clientX: tabboxRect ? tabboxRect.width / 2 : window.innerWidth / 2,
+              clientY: tabboxRect ? tabboxRect.height / 2 : window.innerHeight / 2
+            };
+            return manager.openGlance({
+              url,
+              ...clickPosition,
+              width: 0,
+              height: 0,
+              triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal()
+            }), !0;
+          } catch {
+            break;
+          }
+        break;
+      }
+      case "vsplit":
+      case "hsplit":
+        if (window.gZenViewSplitter) {
+          let sep = destination === "vsplit" ? "vsep" : "hsep", tab1 = gBrowser.selectedTab;
+          await openTrustedLinkIn(url, "tab");
+          let tab2 = gBrowser.selectedTab;
+          return gZenViewSplitter.splitTabs([tab1, tab2], sep, 1), !0;
+        }
+        break;
+      default:
+        break;
+    }
+    return openTrustedLinkIn(url, "tab"), !1;
+  }
+
   // search-engine-select/index.js
   var SearchEngineSwitcher = {
     _container: null,
@@ -197,6 +249,7 @@
     _initialTop: 0,
     _boundListeners: {},
     _progressListener: null,
+    _resizeObserver: null,
     async init() {
       if (!PREFS2.enabled) {
         PREFS2.debugLog("Initialization aborted: feature is disabled.");
@@ -237,7 +290,34 @@
             continue;
           }
       }
-      return null;
+      return this.matchGenericSearchUrl(url);
+    },
+    matchGenericSearchUrl(url) {
+      let parsed;
+      try {
+        parsed = new URL(url);
+      } catch {
+        return null;
+      }
+      let term = null, searchParams = ["q", "query", "search", "text", "p", "wd"];
+      for (let key of searchParams) {
+        let value = parsed.searchParams.get(key);
+        if (value && value.trim()) {
+          term = value.trim();
+          break;
+        }
+      }
+      if (!term)
+        return null;
+      let host = parsed.hostname.toLowerCase().replace(/[^a-z0-9]/g, ""), engine = null;
+      for (let { engine: candidate } of this._engineCache) {
+        let nameKey = candidate.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (nameKey && host.includes(nameKey)) {
+          engine = candidate;
+          break;
+        }
+      }
+      return PREFS2.debugLog(`Generic match: Engine='${engine?.name ?? "unknown"}', Term='${term}'`), { engine, term, host: parsed.hostname };
     },
     updateSwitcherVisibility() {
       let url = gBrowser.selectedBrowser.currentURI.spec, newSearchInfo = this.matchUrl(url);
@@ -258,9 +338,9 @@
     updateSelectedEngineDisplay() {
       if (!this._currentSearchInfo || !this._engineSelect)
         return;
-      let { engine } = this._currentSearchInfo, img = parseElement("<img>");
-      img.src = getSearchEngineFavicon(engine);
-      let nameSpan = parseElement(`<span>${escapeXmlAttribute(engine.name)}</span>`);
+      let { engine, host } = this._currentSearchInfo, img = parseElement("<img>");
+      img.src = engine ? getSearchEngineFavicon(engine) : "chrome://browser/skin/zen-icons/search-glass.svg";
+      let label = engine ? engine.name : host || "Unknown search", nameSpan = parseElement(`<span>${escapeXmlAttribute(label)}</span>`);
       this._engineSelect.replaceChildren(img, nameSpan);
     },
     handleEnabledChange(pref) {
@@ -270,7 +350,7 @@
         this.destroy();
     },
     handleTabSelect() {
-      if (this._hide(), this.updateSwitcherVisibility(), this.handleSplitOrGlance(), gBrowser.selectedTab?.hasAttribute("zen-glance-tab"))
+      if (this._hide(), this.updateSwitcherVisibility(), this.handleSplitOrGlance(), this.observeSelectedBrowser(), gBrowser.selectedTab?.hasAttribute("zen-glance-tab"))
         setTimeout(() => this.updatePosition(), 500);
     },
     onLocationChange(browser) {
@@ -285,7 +365,20 @@
         this._container.style.removeProperty("--ses-pane-x"), this._container.style.removeProperty("--ses-pane-width"), this._container.classList.remove("in-split-view");
         return;
       }
-      this.updatePosition(), this._container.classList.add("in-split-view");
+      this._container.classList.add("in-split-view"), this.updatePosition();
+    },
+    observeSelectedBrowser() {
+      try {
+        this._resizeObserver?.disconnect();
+      } catch {}
+      let browser = typeof gBrowser < "u" ? gBrowser.selectedBrowser : null;
+      if (!browser || !this._resizeObserver)
+        return;
+      try {
+        this._resizeObserver.observe(browser);
+      } catch (e) {
+        PREFS2.debugError("Failed to observe selected browser for repositioning.", e);
+      }
     },
     updatePosition() {
       let activeBrowser = gBrowser.selectedBrowser;
@@ -294,6 +387,8 @@
         return;
       }
       let rect = activeBrowser.getBoundingClientRect();
+      if (!rect.width)
+        return;
       this._container.style.setProperty("--ses-pane-x", `${rect.x}px`), this._container.style.setProperty("--ses-pane-width", `${rect.width}px`);
     },
     async handleURLBarKey(event) {
@@ -312,38 +407,26 @@
         PREFS2.debugLog(`URL bar search detected. Engine: ${engine.name}, Term: ${term}`), this._currentSearchInfo = { engine, term }, this._show();
     },
     async handleEngineClick(event, newEngine) {
-      if (event.preventDefault(), event.stopPropagation(), newEngine.name === this._currentSearchInfo?.engine.name) {
+      if (event.preventDefault(), event.stopPropagation(), newEngine.name === this._currentSearchInfo?.engine?.name) {
         PREFS2.debugLog(`Clicked on same engine ('${newEngine.name}'). Closing menu.`), this._engineOptions.style.display = "none", this._container.classList.remove("options-visible");
         return;
       }
       if (!this._currentSearchInfo?.term)
         return;
-      let term = this._currentSearchInfo.term, newUrl = newEngine.getSubmission(term).uri.spec, actionTaken = !1;
-      if (event.button === 0 && event.ctrlKey && !event.altKey && !event.shiftKey) {
-        if (PREFS2.debugLog("Action: Split View"), window.gZenViewSplitter) {
-          let previousTab = gBrowser.selectedTab;
-          await openTrustedLinkIn(newUrl, "tab");
-          let currentTab = gBrowser.selectedTab;
-          gZenViewSplitter.splitTabs([currentTab, previousTab], "vsep", 1);
-        } else
-          openTrustedLinkIn(newUrl, "tab");
-        actionTaken = !0;
-      } else if (event.button === 0 && event.altKey) {
-        if (PREFS2.debugLog("Action: Glance"), window.gZenGlanceManager)
-          window.gZenGlanceManager.openGlance({
-            url: newUrl
-          });
-        else
-          openTrustedLinkIn(newUrl, "tab");
-        actionTaken = !0;
-      } else if (event.button === 1)
-        PREFS2.debugLog("Action: Background Tab"), openTrustedLinkIn(newUrl, "tab", {
-          inBackground: !0,
-          relatedToCurrent: !0
-        });
+      let term = this._currentSearchInfo.term, newUrl = newEngine.getSubmission(term).uri.spec, where = null;
+      if (event.button === 0 && event.ctrlKey && !event.altKey && !event.shiftKey)
+        where = "vsplit";
+      else if (event.button === 0 && event.altKey)
+        where = "glance";
+      else if (event.button === 1)
+        where = "background tab";
       else if (event.button === 0)
-        PREFS2.debugLog("Action: Current Tab"), openTrustedLinkIn(newUrl, "current"), actionTaken = !0;
-      if (actionTaken)
+        where = "current tab";
+      if (!where) {
+        this._engineOptions.style.display = "none", this._container.classList.remove("options-visible");
+        return;
+      }
+      if (PREFS2.debugLog(`Action: ${where}`), await openLink(newUrl, where))
         this.updateSelectedEngineDisplay();
       this._engineOptions.style.display = "none", this._container.classList.remove("options-visible");
     },
@@ -405,12 +488,16 @@
         ])
       }, this._boundListeners.handleTabSelect = this.handleTabSelect.bind(this), this._boundListeners.handleURLBarKey = this.handleURLBarKey.bind(this), this._boundListeners.toggleOptions = this.toggleOptions.bind(this), this._boundListeners.hideOptionsOnClickOutside = this.hideOptionsOnClickOutside.bind(this), this._boundListeners.startDrag = this.startDrag.bind(this), this._boundListeners.doDrag = this.doDrag.bind(this), this._boundListeners.stopDrag = this.stopDrag.bind(this), this._boundListeners.onSplitViewActivated = this.handleSplitOrGlance.bind(this), this._boundListeners.onSplitViewDeactivated = this.handleSplitOrGlance.bind(this), this._boundListeners.onCompactModeToggled = this.updatePosition.bind(this), this._boundListeners.onResize = this.updatePosition.bind(this), this._boundListeners.onTabClose = () => {
         this.updatePosition(), setTimeout(() => this.updatePosition(), 500);
-      }, gBrowser.tabContainer.addEventListener("TabSelect", this._boundListeners.handleTabSelect), gBrowser.addTabsProgressListener(this._progressListener), gURLBar.inputField.addEventListener("keydown", this._boundListeners.handleURLBarKey), this._engineSelect.addEventListener("click", this._boundListeners.toggleOptions), document.addEventListener("click", this._boundListeners.hideOptionsOnClickOutside), this._dragHandle.addEventListener("mousedown", this._boundListeners.startDrag), gBrowser.tabContainer.addEventListener("TabClose", this._boundListeners.onTabClose), window.addEventListener("ZenViewSplitter:SplitViewActivated", this._boundListeners.onSplitViewActivated), window.addEventListener("ZenViewSplitter:SplitViewDeactivated", this._boundListeners.onSplitViewDeactivated), window.addEventListener("ZenCompactMode:Toggled", this._boundListeners.onCompactModeToggled), window.addEventListener("resize", this._boundListeners.onResize);
+      }, this._resizeObserver = new ResizeObserver(() => this.updatePosition()), this.observeSelectedBrowser(), gBrowser.tabContainer.addEventListener("TabSelect", this._boundListeners.handleTabSelect), gBrowser.addTabsProgressListener(this._progressListener), gURLBar.inputField.addEventListener("keydown", this._boundListeners.handleURLBarKey), this._engineSelect.addEventListener("click", this._boundListeners.toggleOptions), document.addEventListener("click", this._boundListeners.hideOptionsOnClickOutside), this._dragHandle.addEventListener("mousedown", this._boundListeners.startDrag), gBrowser.tabContainer.addEventListener("TabClose", this._boundListeners.onTabClose), window.addEventListener("ZenViewSplitter:SplitViewActivated", this._boundListeners.onSplitViewActivated), window.addEventListener("ZenViewSplitter:SplitViewDeactivated", this._boundListeners.onSplitViewDeactivated), window.addEventListener("ZenCompactMode:Toggled", this._boundListeners.onCompactModeToggled), window.addEventListener("resize", this._boundListeners.onResize);
     },
     removeEventListeners() {
       if (gBrowser.tabContainer.removeEventListener("TabSelect", this._boundListeners.handleTabSelect), this._progressListener)
         gBrowser.removeTabsProgressListener(this._progressListener), this._progressListener = null;
-      gURLBar.inputField.removeEventListener("keydown", this._boundListeners.handleURLBarKey), this._engineSelect?.removeEventListener("click", this._boundListeners.toggleOptions), document.removeEventListener("click", this._boundListeners.hideOptionsOnClickOutside), this._dragHandle?.removeEventListener("mousedown", this._boundListeners.startDrag), document.removeEventListener("mousemove", this._boundListeners.doDrag), document.removeEventListener("mouseup", this._boundListeners.stopDrag), gBrowser.tabContainer.removeEventListener("TabClose", this._boundListeners.onTabClose), window.removeEventListener("ZenViewSplitter:SplitViewActivated", this._boundListeners.onSplitViewActivated), window.removeEventListener("ZenViewSplitter:SplitViewDeactivated", this._boundListeners.onSplitViewDeactivated), window.removeEventListener("ZenCompactMode:Toggled", this._boundListeners.onCompactModeToggled), window.removeEventListener("resize", this._boundListeners.onResize), this._boundListeners = {};
+      gURLBar.inputField.removeEventListener("keydown", this._boundListeners.handleURLBarKey), this._engineSelect?.removeEventListener("click", this._boundListeners.toggleOptions), document.removeEventListener("click", this._boundListeners.hideOptionsOnClickOutside), this._dragHandle?.removeEventListener("mousedown", this._boundListeners.startDrag), document.removeEventListener("mousemove", this._boundListeners.doDrag), document.removeEventListener("mouseup", this._boundListeners.stopDrag), gBrowser.tabContainer.removeEventListener("TabClose", this._boundListeners.onTabClose), window.removeEventListener("ZenViewSplitter:SplitViewActivated", this._boundListeners.onSplitViewActivated), window.removeEventListener("ZenViewSplitter:SplitViewDeactivated", this._boundListeners.onSplitViewDeactivated), window.removeEventListener("ZenCompactMode:Toggled", this._boundListeners.onCompactModeToggled), window.removeEventListener("resize", this._boundListeners.onResize);
+      try {
+        this._resizeObserver?.disconnect();
+      } catch {}
+      this._resizeObserver = null, this._boundListeners = {};
     }
   };
   function init() {

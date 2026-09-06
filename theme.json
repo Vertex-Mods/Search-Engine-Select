@@ -4,8 +4,8 @@
   "name": "Search Engine Select",
   "description": "Adds a floating UI to switch search engines on a search results page.",
   "author": "Bibek Bhusal",
-  "version": "1.1.3",
-  "updatedAt": "2026-06-20",
+  "version": "1.1.31",
+  "updatedAt": "2026-09-06",
   "tags": [
     "Search",
     "Search Engine",
