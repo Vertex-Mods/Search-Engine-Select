@@ -1,23 +1,24 @@
+@import "utils-zen-design.css";
+
 :root {
-  --ses-bg-color: #1c1b22;
-  --ses-text-color: #fbfbfe;
-  --ses-border-color: #5a5a5e;
-  --ses-hover-bg: #424246;
-  --ses-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
   --ses-scale: 1;
 
   @media -moz-pref("extension.search-engine-select.theme", "light") {
-    --ses-bg-color: #f0f0f2;
-    --ses-text-color: #15141a;
-    --ses-border-color: #cfcfd8;
-    --ses-hover-bg: #e0e0e6;
+    #search-engine-switcher-container {
+      --zenux-bg: rgb(250, 250, 250);
+      --zenux-text: #15141a;
+      --zenux-border: rgba(127, 127, 127, 0.35);
+      --zenux-surface-hover: rgba(20, 20, 22, 0.07);
+    }
   }
 
   @media -moz-pref("extension.search-engine-select.theme", "amoled") {
-    --ses-bg-color: #000000;
-    --ses-text-color: #ffffff;
-    --ses-border-color: #333333;
-    --ses-hover-bg: #1a1a1a;
+    #search-engine-switcher-container {
+      --zenux-bg: #000000;
+      --zenux-text: #ffffff;
+      --zenux-border: rgba(255, 255, 255, 0.16);
+      --zenux-surface-hover: rgba(255, 255, 255, 0.08);
+    }
   }
 
   @media -moz-pref("extension.search-engine-select.size", "small") {
@@ -32,6 +33,7 @@
 #search-engine-switcher-container {
   --container-padding: 7px;
   position: fixed;
+  font-family: var(--zenux-font);
   right: 0;
   top: 50%;
   transform: translateY(-50%) scale(var(--ses-scale));
@@ -41,11 +43,33 @@
   align-items: center;
   border-right: none;
   border-radius: 30px 0 0 30px;
-  background-color: var(--ses-bg-color) !important;
-  border: 1px solid var(--ses-border-color);
+  background-color: var(--zenux-bg) !important;
+  border: 2px solid var(--zenux-border);
   padding: var(--container-padding) 4px var(--container-padding) var(--container-padding);
   gap: 0px;
   transform-origin: right center;
+
+  @media -moz-pref("extension.search-engine-select.autohide", "translucent") {
+    opacity: 0.4;
+    transition: opacity 0.18s var(--zenux-ease);
+
+    &:hover,
+    &.is-dragging,
+    &.options-visible {
+      opacity: 1;
+    }
+  }
+
+  @media -moz-pref("extension.search-engine-select.autohide", "hidden") {
+    opacity: 0;
+    transition: opacity 0.18s var(--zenux-ease);
+
+    &:hover,
+    &.is-dragging,
+    &.options-visible {
+      opacity: 1;
+    }
+  }
 
   &.in-split-view {
     right: calc(100% - var(--ses-pane-x) - var(--ses-pane-width));
@@ -62,17 +86,23 @@
 
       span {
         opacity: 1;
-        scale: 1;
-        width: auto;
+        max-width: 160px;
         margin-right: 5px;
       }
     }
 
     #ses-drag-handle {
-      opacity: 1;
+      opacity: 0.7;
       width: 14px;
-      scale: 0.8;
       margin-left: 5px;
+    }
+
+    #ses-close-btn {
+      opacity: 1;
+      width: 16px;
+      transition:
+        opacity 0.15s var(--zenux-ease) 0.12s,
+        width 0.15s var(--zenux-ease) 0.12s;
     }
   }
 
@@ -83,31 +113,33 @@
     cursor: pointer;
     height: 100%;
     box-sizing: border-box;
-    transition: all 0.2s ease-in-out;
+    transition: max-width 0.18s var(--zenux-ease);
     overflow: hidden;
     z-index: 2;
-    max-width: 34px;
+    max-width: 40px;
     width: max-content;
 
     img {
-      width: 32px;
-      height: 32px;
+      width: 28px;
+      height: 28px;
       flex-shrink: 0;
-      fill: var(--ses-text-color) !important;
+      border-radius: var(--zenux-radius-s);
+      fill: var(--zenux-text) !important;
       -moz-context-properties: fill !important;
     }
 
     span {
-      font-size: 14px;
+      font-size: 13px;
+      font-weight: 500;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
       opacity: 0;
-      scale: 0;
-      width: 0;
-      transform-origin: right;
-      color: var(--ses-text-color);
-      transition: all 0.2s 0.1s ease-in-out;
+      max-width: 0;
+      transition:
+        opacity 0.15s var(--zenux-ease),
+        max-width 0.18s var(--zenux-ease);
+      color: var(--zenux-text);
     }
   }
 
@@ -119,26 +151,58 @@
     background-repeat: no-repeat;
     background-position: center;
     z-index: 1;
-    scale: 0;
     opacity: 0;
-    transition: all 0.2s ease;
-    transform-origin: center;
+    overflow: hidden;
+    transition:
+      opacity 0.15s var(--zenux-ease),
+      width 0.18s var(--zenux-ease);
+  }
+
+  #ses-close-btn {
+    position: absolute;
+    top: -8px;
+    left: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 16px;
+    width: 0px;
+    overflow: hidden;
+    cursor: pointer;
+    z-index: 1;
+    opacity: 0;
+    background-color: var(--zenux-danger);
+    border-radius: 50%;
+    transition:
+      opacity 0.15s var(--zenux-ease),
+      width 0.15s var(--zenux-ease);
+
+    img {
+      width: 10px;
+      height: 10px;
+      fill: white !important;
+      -moz-context-properties: fill;
+    }
+
+    &:hover {
+      filter: brightness(1.15);
+    }
   }
 
   #ses-engine-options {
-    background: var(--ses-bg-color) !important;
-    border: 1px solid var(--ses-border-color);
-    color: var(--ses-text-color);
-    box-shadow: var(--ses-shadow);
+    background: var(--zenux-bg) !important;
+    border: 1px solid var(--zenux-border);
+    color: var(--zenux-text);
+    box-shadow: var(--zenux-shadow-s);
     position: absolute;
     right: 0;
-    width: 220px;
-    border-radius: 8px;
+    width: 230px;
+    border-radius: var(--zenux-radius-m);
     max-height: 50vh;
     overflow-y: auto;
     z-index: 10001;
     display: none;
-    padding: 4px;
+    padding: 6px;
 
     &.popup-above {
       bottom: 100%;
@@ -151,23 +215,39 @@
     }
 
     .ses-engine-option {
-      padding: 6px 10px;
+      padding: 7px 10px;
       display: flex;
       align-items: center;
       cursor: pointer;
-      gap: 8px;
-      border-radius: 4px;
+      gap: 10px;
+      border-radius: var(--zenux-radius-s);
+      border: 1px solid transparent;
+      font-size: 13px;
 
       &:hover {
-        background-color: var(--ses-hover-bg);
+        background-color: var(--zenux-surface-hover);
+      }
+
+      &[data-current="true"] {
+        background: var(--zenux-accent-soft);
+        border-color: var(--zenux-accent-border);
+        font-weight: 600;
       }
 
       img {
         width: 16px;
         height: 16px;
         flex-shrink: 0;
+        border-radius: 4px;
       }
     }
+  }
+}
+
+/* Never overlay fullscreen content */
+:root:is([inFullscreen="true"], [inDOMFullscreen="true"]) {
+  #search-engine-switcher-container {
+    display: none !important;
   }
 }
 
@@ -176,7 +256,7 @@
     left: 0 !important;
     right: unset !important;
     border-left: none !important;
-    border-right: 1px solid var(--ses-border-color);
+    border-right: 1px solid var(--zenux-border);
     border-radius: 0 30px 30px 0;
     flex-direction: row-reverse !important;
     transform-origin: left center;
@@ -198,6 +278,11 @@
     #ses-drag-handle {
       margin-left: 0 !important;
       margin-right: 5px !important;
+    }
+
+    #ses-close-btn {
+      right: 4px !important;
+      left: unset !important;
     }
   }
 }

@@ -2,8 +2,8 @@
 // @name            Search Engine Select
 // @description     Adds a floating UI to switch search engines on a search results page.
 // @author          Bibek Bhusal
-// @version         1.1.32
-// @lastUpdated     2026-09-07
+// @version         1.1.33
+// @lastUpdated     2026-10-09
 // @ignorecache
 // @homepage        https://github.com/Vertex-Mods/Search-Engine-Select
 // ==/UserScript==
@@ -95,7 +95,7 @@
     let modified_callback = () => {
       callback({ value: getPref(name) });
     };
-    return Services.prefs.addObserver(name, modified_callback), { name, callback };
+    return Services.prefs.addObserver(name, modified_callback), { name, observer: modified_callback, callback };
   }
   class PREFS {
     static MOD_NAME = "BasePrefs";
@@ -138,11 +138,13 @@
     static DEBUG_MODE = "extension.search-engine-select.debug-mode";
     static ENABLED = "extension.search-engine-select.enabled";
     static REMEMBER_POSITION = "extension.search-engine-select.remember-position";
+    static AUTOHIDE = "extension.search-engine-select.autohide";
     static Y_COOR = "extension.search-engine-select.y-coor";
     static defaultValues = {
       [SearchEngineSelectPREFS.DEBUG_MODE]: !1,
       [SearchEngineSelectPREFS.ENABLED]: !0,
       [SearchEngineSelectPREFS.REMEMBER_POSITION]: !0,
+      [SearchEngineSelectPREFS.AUTOHIDE]: "off",
       [SearchEngineSelectPREFS.Y_COOR]: "60%"
     };
     static get enabled() {
@@ -156,6 +158,12 @@
     }
     static set rememberPosition(value) {
       this.setPref(this.REMEMBER_POSITION, value);
+    }
+    static get autohide() {
+      return this.getPref(this.AUTOHIDE);
+    }
+    static set autohide(value) {
+      this.setPref(this.AUTOHIDE, value);
     }
     static get yCoor() {
       return this.getPref(this.Y_COOR);
@@ -221,15 +229,30 @@
           }
         break;
       }
+      case "vsep":
       case "vsplit":
-      case "hsplit":
-        if (window.gZenViewSplitter) {
-          let sep = destination === "vsplit" ? "vsep" : "hsep", tab1 = gBrowser.selectedTab;
-          await openTrustedLinkIn(url, "tab");
-          let tab2 = gBrowser.selectedTab;
-          return gZenViewSplitter.splitTabs([tab1, tab2], sep, 1), !0;
-        }
-        break;
+      case "hsep":
+      case "hsplit": {
+        let splitter = window.gZenViewSplitter;
+        if (!splitter)
+          break;
+        let sep = destination.startsWith("v") ? "vsep" : "hsep", side = sep === "vsep" ? "right" : "bottom", currentTab = gBrowser.selectedTab, wasInGroup = !!currentTab?.splitView;
+        await openTrustedLinkIn(url, "tab");
+        let newTab = gBrowser.selectedTab;
+        splitter.splitTabs([currentTab, newTab], sep, 1);
+        let group = splitter._data.find((g) => g.tabs.includes(newTab));
+        if (!group || group.gridType === sep)
+          return !0;
+        if (!wasInGroup || group.tabs.length <= 2)
+          return splitter.splitTabs([...group.tabs], sep, group.tabs.indexOf(newTab)), !0;
+        let curNode = splitter.getSplitNodeFromTab(currentTab), newNode = splitter.getSplitNodeFromTab(newTab);
+        if (!curNode?.parent || !newNode?.parent || curNode === newNode)
+          return splitter.splitTabs([...group.tabs], sep, group.tabs.indexOf(newTab)), !0;
+        let oldParent = newNode.parent;
+        oldParent.children.splice(oldParent.children.indexOf(newNode), 1);
+        let restore = (oldParent.children.length + 1) / oldParent.children.length;
+        return oldParent.children.forEach((c) => c.sizeInParent *= restore), splitter.splitIntoNode(curNode, newNode, side, 0.5), splitter.activateSplitView(group, !0), !0;
+      }
       default:
         break;
     }
@@ -242,6 +265,8 @@
     _engineSelect: null,
     _engineOptions: null,
     _dragHandle: null,
+    _closeBtn: null,
+    _dismissedBrowsers: /* @__PURE__ */ new WeakSet,
     _engineCache: [],
     _currentSearchInfo: null,
     _isDragging: !1,
@@ -258,7 +283,7 @@
       PREFS2.debugLog("Initializing..."), await this.buildEngineRegexCache(), this.createUI(), this.attachEventListeners(), this.updateSwitcherVisibility();
     },
     destroy() {
-      this._container?.remove(), this.removeEventListeners(), this._container = null, this._engineSelect = null, this._engineOptions = null, this._dragHandle = null, PREFS2.debugLog("Destroyed successfully.");
+      this._container?.remove(), this.removeEventListeners(), this._container = null, this._engineSelect = null, this._engineOptions = null, this._dragHandle = null, this._closeBtn = null, PREFS2.debugLog("Destroyed successfully.");
     },
     async buildEngineRegexCache() {
       PREFS2.debugLog("Building engine regex cache..."), this._engineCache = [];
@@ -321,11 +346,19 @@
     },
     updateSwitcherVisibility() {
       let url = gBrowser.selectedBrowser.currentURI.spec, newSearchInfo = this.matchUrl(url);
-      if (newSearchInfo)
-        this._currentSearchInfo = newSearchInfo, this._show();
+      if (newSearchInfo) {
+        if (this._currentSearchInfo = newSearchInfo, this._dismissedBrowsers.has(gBrowser.selectedBrowser)) {
+          this._hide();
+          return;
+        }
+        this._show();
+      } else
+        this._currentSearchInfo = null, this._hide();
     },
     _show() {
       if (!this._container)
+        return;
+      if (this._dismissedBrowsers.has(gBrowser.selectedBrowser))
         return;
       this._container.style.display = "flex", this.updateSelectedEngineDisplay(), this.handleSplitOrGlance();
     },
@@ -341,7 +374,10 @@
       let { engine, host } = this._currentSearchInfo, img = parseElement("<img>");
       img.src = engine ? getSearchEngineFavicon(engine) : "chrome://browser/skin/zen-icons/search-glass.svg";
       let label = engine ? engine.name : host || "Unknown search", nameSpan = parseElement(`<span>${escapeXmlAttribute(label)}</span>`);
-      this._engineSelect.replaceChildren(img, nameSpan);
+      this._engineSelect.replaceChildren(img, nameSpan), this._engineOptions?.querySelectorAll(".ses-engine-option").forEach((opt) => {
+        let optLabel = opt.querySelector("span")?.textContent;
+        opt.dataset.current = optLabel === label ? "true" : "false";
+      });
     },
     handleEnabledChange(pref) {
       if (pref.value)
@@ -440,20 +476,26 @@
     hideOptionsOnClickOutside() {
       this._engineOptions.style.display = "none", this._container.classList.remove("options-visible");
     },
+    handleClose(event) {
+      event.preventDefault(), event.stopPropagation(), this._dismissedBrowsers.add(gBrowser.selectedBrowser), this._hide(), PREFS2.debugLog("Switcher dismissed for this tab.");
+    },
     createUI() {
       let container = parseElement(`
       <div id="search-engine-switcher-container" style="top: ${PREFS2.yCoor};">
         <div id="ses-engine-select"></div>
         <div id="ses-drag-handle"></div>
+        <div id="ses-close-btn" title="Hide switcher for this tab"><img src="chrome://browser/skin/zen-icons/close.svg"></div>
         <div id="ses-engine-options"></div>
       </div>
     `);
-      this._container = container, this._engineSelect = container.querySelector("#ses-engine-select"), this._dragHandle = container.querySelector("#ses-drag-handle"), this._engineOptions = container.querySelector("#ses-engine-options"), document.documentElement.append(this._container), this.populateEngineList();
+      this._container = container, this._engineSelect = container.querySelector("#ses-engine-select"), this._dragHandle = container.querySelector("#ses-drag-handle"), this._closeBtn = container.querySelector("#ses-close-btn"), this._engineOptions = container.querySelector("#ses-engine-options"), document.documentElement.append(this._container), this.populateEngineList();
     },
     async populateEngineList() {
-      this._engineOptions.innerHTML = "", (await getVisibleEngines()).forEach((engine) => {
+      this._engineOptions.innerHTML = "";
+      let engines = await getVisibleEngines(), currentName = this._currentSearchInfo?.engine?.name;
+      engines.forEach((engine) => {
         let option = parseElement(`
-        <div class="ses-engine-option" title="Search with ${escapeXmlAttribute(engine.name)}">
+        <div class="ses-engine-option" data-current="${engine.name === currentName}" title="Search with ${escapeXmlAttribute(engine.name)}">
           <span>${escapeXmlAttribute(engine.name)}</span>
         </div>
       `), img = parseElement("<img>");
@@ -486,14 +528,14 @@
           "nsIWebProgressListener",
           "nsISupportsWeakReference"
         ])
-      }, this._boundListeners.handleTabSelect = this.handleTabSelect.bind(this), this._boundListeners.handleURLBarKey = this.handleURLBarKey.bind(this), this._boundListeners.toggleOptions = this.toggleOptions.bind(this), this._boundListeners.hideOptionsOnClickOutside = this.hideOptionsOnClickOutside.bind(this), this._boundListeners.startDrag = this.startDrag.bind(this), this._boundListeners.doDrag = this.doDrag.bind(this), this._boundListeners.stopDrag = this.stopDrag.bind(this), this._boundListeners.onSplitViewActivated = this.handleSplitOrGlance.bind(this), this._boundListeners.onSplitViewDeactivated = this.handleSplitOrGlance.bind(this), this._boundListeners.onCompactModeToggled = this.updatePosition.bind(this), this._boundListeners.onResize = this.updatePosition.bind(this), this._boundListeners.onTabClose = () => {
+      }, this._boundListeners.handleTabSelect = this.handleTabSelect.bind(this), this._boundListeners.handleURLBarKey = this.handleURLBarKey.bind(this), this._boundListeners.toggleOptions = this.toggleOptions.bind(this), this._boundListeners.hideOptionsOnClickOutside = this.hideOptionsOnClickOutside.bind(this), this._boundListeners.handleClose = this.handleClose.bind(this), this._boundListeners.startDrag = this.startDrag.bind(this), this._boundListeners.doDrag = this.doDrag.bind(this), this._boundListeners.stopDrag = this.stopDrag.bind(this), this._boundListeners.onSplitViewActivated = this.handleSplitOrGlance.bind(this), this._boundListeners.onSplitViewDeactivated = this.handleSplitOrGlance.bind(this), this._boundListeners.onCompactModeToggled = this.updatePosition.bind(this), this._boundListeners.onResize = this.updatePosition.bind(this), this._boundListeners.onTabClose = () => {
         this.updatePosition(), setTimeout(() => this.updatePosition(), 500);
-      }, this._resizeObserver = new ResizeObserver(() => this.updatePosition()), this.observeSelectedBrowser(), gBrowser.tabContainer.addEventListener("TabSelect", this._boundListeners.handleTabSelect), gBrowser.addTabsProgressListener(this._progressListener), gURLBar.inputField.addEventListener("keydown", this._boundListeners.handleURLBarKey), this._engineSelect.addEventListener("click", this._boundListeners.toggleOptions), document.addEventListener("click", this._boundListeners.hideOptionsOnClickOutside), this._dragHandle.addEventListener("mousedown", this._boundListeners.startDrag), gBrowser.tabContainer.addEventListener("TabClose", this._boundListeners.onTabClose), window.addEventListener("ZenViewSplitter:SplitViewActivated", this._boundListeners.onSplitViewActivated), window.addEventListener("ZenViewSplitter:SplitViewDeactivated", this._boundListeners.onSplitViewDeactivated), window.addEventListener("ZenCompactMode:Toggled", this._boundListeners.onCompactModeToggled), window.addEventListener("resize", this._boundListeners.onResize);
+      }, this._resizeObserver = new ResizeObserver(() => this.updatePosition()), this.observeSelectedBrowser(), gBrowser.tabContainer.addEventListener("TabSelect", this._boundListeners.handleTabSelect), gBrowser.addTabsProgressListener(this._progressListener), gURLBar.inputField.addEventListener("keydown", this._boundListeners.handleURLBarKey), this._engineSelect.addEventListener("click", this._boundListeners.toggleOptions), this._closeBtn.addEventListener("click", this._boundListeners.handleClose), document.addEventListener("click", this._boundListeners.hideOptionsOnClickOutside), this._dragHandle.addEventListener("mousedown", this._boundListeners.startDrag), gBrowser.tabContainer.addEventListener("TabClose", this._boundListeners.onTabClose), window.addEventListener("ZenViewSplitter:SplitViewActivated", this._boundListeners.onSplitViewActivated), window.addEventListener("ZenViewSplitter:SplitViewDeactivated", this._boundListeners.onSplitViewDeactivated), window.addEventListener("ZenCompactMode:Toggled", this._boundListeners.onCompactModeToggled), window.addEventListener("resize", this._boundListeners.onResize);
     },
     removeEventListeners() {
       if (gBrowser.tabContainer.removeEventListener("TabSelect", this._boundListeners.handleTabSelect), this._progressListener)
         gBrowser.removeTabsProgressListener(this._progressListener), this._progressListener = null;
-      gURLBar.inputField.removeEventListener("keydown", this._boundListeners.handleURLBarKey), this._engineSelect?.removeEventListener("click", this._boundListeners.toggleOptions), document.removeEventListener("click", this._boundListeners.hideOptionsOnClickOutside), this._dragHandle?.removeEventListener("mousedown", this._boundListeners.startDrag), document.removeEventListener("mousemove", this._boundListeners.doDrag), document.removeEventListener("mouseup", this._boundListeners.stopDrag), gBrowser.tabContainer.removeEventListener("TabClose", this._boundListeners.onTabClose), window.removeEventListener("ZenViewSplitter:SplitViewActivated", this._boundListeners.onSplitViewActivated), window.removeEventListener("ZenViewSplitter:SplitViewDeactivated", this._boundListeners.onSplitViewDeactivated), window.removeEventListener("ZenCompactMode:Toggled", this._boundListeners.onCompactModeToggled), window.removeEventListener("resize", this._boundListeners.onResize);
+      gURLBar.inputField.removeEventListener("keydown", this._boundListeners.handleURLBarKey), this._engineSelect?.removeEventListener("click", this._boundListeners.toggleOptions), this._closeBtn?.removeEventListener("click", this._boundListeners.handleClose), document.removeEventListener("click", this._boundListeners.hideOptionsOnClickOutside), this._dragHandle?.removeEventListener("mousedown", this._boundListeners.startDrag), document.removeEventListener("mousemove", this._boundListeners.doDrag), document.removeEventListener("mouseup", this._boundListeners.stopDrag), gBrowser.tabContainer.removeEventListener("TabClose", this._boundListeners.onTabClose), window.removeEventListener("ZenViewSplitter:SplitViewActivated", this._boundListeners.onSplitViewActivated), window.removeEventListener("ZenViewSplitter:SplitViewDeactivated", this._boundListeners.onSplitViewDeactivated), window.removeEventListener("ZenCompactMode:Toggled", this._boundListeners.onCompactModeToggled), window.removeEventListener("resize", this._boundListeners.onResize);
       try {
         this._resizeObserver?.disconnect();
       } catch {}

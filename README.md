@@ -27,19 +27,20 @@ https://github.com/user-attachments/assets/52a6b810-77ee-4a04-b239-8d59e01478ef
 3. Open settings and go to the `Sine` tab.
 4. Search for Search Engine Select.
 5. Click Install.
-6. A toast for restart should appear — click on that to restart Zen.
+6. A toast for restart should appear - click on that to restart Zen.
 
 ## 🎨 Customization & Preferences
 
 You can customize the script's behavior via `about:config`.
 
-| Preference                                         | Type    | Default    | Description                                                       |
-| -------------------------------------------------- | ------- | ---------- | ----------------------------------------------------------------- |
-| `extension.search-engine-select.enabled`           | Boolean | `true`     | Toggles the entire feature on or off.                             |
-| `extension.search-engine-select.remember-position` | Boolean | `true`     | Saves the vertical position of the UI.                            |
-| `extension.search-engine-select.size`              | String  | `"normal"` | UI Scale (`small`, `normal`, `large`).                            |
-| `extension.search-engine-select.theme`             | String  | `"dark"`   | Visual style (`dark`, `light`, `amoled`).                         |
-| `extension.search-engine-select.debug-mode`        | Boolean | `false`    | Enables detailed logging in the Browser Console (`Ctrl+Shift+J`). |
+| Preference                                         | Type    | Default    | Description                                                                                     |
+| -------------------------------------------------- | ------- | ---------- | ----------------------------------------------------------------------------------------------- |
+| `extension.search-engine-select.enabled`           | Boolean | `true`     | Toggles the entire feature on or off.                                                           |
+| `extension.search-engine-select.remember-position` | Boolean | `true`     | Saves the vertical position of the UI.                                                          |
+| `extension.search-engine-select.size`              | String  | `"normal"` | UI Scale (`small`, `normal`, `large`).                                                          |
+| `extension.search-engine-select.theme`             | String  | `"dark"`   | Visual style (`dark`, `light`, `amoled`).                                                       |
+| `extension.search-engine-select.autohide`          | String  | `"off"`    | Hide until hover (`off`, `translucent`, `hidden`). The switcher is always hidden in fullscreen. |
+| `extension.search-engine-select.debug-mode`        | Boolean | `false`    | Enables detailed logging in the Browser Console (`Ctrl+Shift+J`).                               |
 
 ## 🙏 Credits and Acknowledgements
 
